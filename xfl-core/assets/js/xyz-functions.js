@@ -6,16 +6,22 @@ jQuery(function($){
     // urlRestApi: 'http://localhost/www/gestion101Min/gefor_101/_api_core/api',
     // urlRestApi: 'http://62.171.160.162/gestion_form101/_api_core/api',
     // urlRestApi   : '../$coreapi/api' ,
-    // urlRestApiWP : 'http://localhost/www/wp/magistratura/wp-json/' ,
+    urlRestApiWP: 'http://localhost/www/wp/magistratura/wp-json/',
     // urlRestApiWP : 'https://www.observatorio.xhr.xof.mybluehost.me/wp-json/' ,
-    urlRestApiWP : 'http://localhost/www/wp/magistratura/wp-json/' ,
+    // urlRestApiWP : 'http://localhost/www/wp/observatorio/wp-json/' ,
   
-    showModal: function (modal) {
+    /**
+     * 
+     * @param {modal: contenedor} modal 
+     * @param {closeOnBgClick: true, por defecto} closeOnBgClick 
+     */
+    showModal: function (modal, closeOnBgClick = true) {
       $(".state-error").removeClass("state-error")
       $("#form_cont em").remove();
       $.magnificPopup.open({
         removalDelay: 200, //delay removal by X to allow out-animation,
         focus: '#titulo',
+        closeOnBgClick: closeOnBgClick,
         items: {
           src: modal
         },

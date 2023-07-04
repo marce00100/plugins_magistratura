@@ -1,7 +1,17 @@
 <?php
+require_once $xfrContenidos->path  . "src/libs-php/lib-normaliza.php";
+
 use frctl\MasterController;
+use frctl\Normaliza;
+use FuncionesContenidosController as FuncionesContenidos;
 
 class ContenidosController extends MasterController {
+
+	public $funcionesContenidos;
+
+	public function __construct()	{
+		$this->funcionesContenidos = new FuncionesContenidos();
+	}
 
 	/**
 	 * POST Obtiene los contenidos, $request tiene la informacion del datatable
@@ -29,31 +39,12 @@ class ContenidosController extends MasterController {
 		
 		$obj->textoBusqueda = $req->texto_busqueda ?? null;
 
-		if ($obj->tipo_contenido != 'sentencias') {
-			$contenidos = $this->getContenidos($obj);
-		} else {
+		/* SENTENCIAS */
+		if ($obj->tipo_contenido == 'sentencias') {
 			$contenidos = $this->contentsSentencias($obj);
+			return ['TODO' => 'Revisar sentencias premiadas '];
 		}	
 
-		return [
-			'data'                 => $contenidos->data,
-			'data_tipo_contenido'  => $contenidos->data_tipo_contenido,
-			'draw'                 => $contenidos->draw,
-			'recordsTotal'         => $contenidos->recordsTotal,
-			'recordsFiltered'      => $contenidos->recordsFiltered,
-			'query'							   => $contenidos->query,
-			'time'					       => microtime(true) - $tiempoInicio,
-			'obj' => $obj
-		];
-		
-	}
-
-	/**
-	 * DE CLASE Obtiene los contenidos, $obj  tiene la informacion del datatable 
-	 * Exclusivo PARA DATATABLES desde servidor con  Ajax 
-	 */
-	private function getContenidos($obj) {
-		// mysqli_set_charset(wpdb, "utf8");
 		$condicion = '';
 		$condicion .= empty($obj->estado_contenido) ? '' : " AND estado_contenido = {$obj->estado_contenido} ";
 		$condicion .= empty($obj->tipo_contenido)   ? '' : " AND tipo_contenido like '{$obj->tipo_contenido}%' ";
@@ -66,9 +57,9 @@ class ContenidosController extends MasterController {
 		(al ingresar siempre columnIndex es 0, eso en caso de que sea la vista publica, en admin la columna 0 es invisible)*/
 		$orderBy = '';
 		if($obj->columnIndex == 0)
-			$orderBy = " orden desc, fecha_publicacion desc";
+			$orderBy = " orden desc, fecha_publicacion desc, id_contenido desc";
 		else
-			$orderBy = " {$obj->columnName} {$obj->columnSortOrder}";
+			$orderBy = " {$obj->columnName} {$obj->columnSortOrder}, id_contenido {$obj->columnSortOrder} ";
 
 		$DB = $this;
 		$query = "SELECT id as id_contenido, tipo_contenido, titulo, resumen, contenido, estado_contenido, imagen
@@ -85,13 +76,12 @@ class ContenidosController extends MasterController {
 
 		global $xfrContenidos;
 		/* Se obtiene las configuraciones de rutas del parametro del tipo contenido */
-		$configsTipoCont = $this->objTipoContenido($obj->tipo_contenido);
+		$configsTipoCont = $this->funcionesContenidos->objTipoContenido($obj->tipo_contenido);
 
 		foreach ($lista_contenidos as $contenido) {
 			if(!$contenido->resumen || trim($contenido->resumen) == ''){
-				$contenidoSinTags = preg_replace('/<w[^>]*>[^>]*<\/w[^>]*>|<xml>[^>]*<\/xml>|<style>[^>]*<\/style>|<[^>]*>/', '', $contenido->contenido);
-				// $contenidoSinTags = preg_replace('/\s|\n|\r|\t/', '', $contenidoSinTags);
-				$contenido->resumen = substr(trim($contenidoSinTags), 0, 150);
+				$contenidoSinTags = $this->funcionesContenidos->quitarHtmlTags($contenido->contenido);
+				$contenido->resumen = substr(trim($contenidoSinTags), 0, 180) . '...';
 			}
 
 			/* si imagen_sm */
@@ -105,31 +95,31 @@ class ContenidosController extends MasterController {
 				continue;
 			}
 			/* si primera_imagen */
-			else if(!empty($contenido->url_primera_imagen) && file_exists($configsTipoCont->pathImagenesModulo . $contenido->url_primera_imagen)){
-				$contenido->imagen_sm = $configsTipoCont->urlImagenesModulo . $contenido->url_primera_imagen;
-				continue;
-			}
+			// else if(!empty($contenido->url_primera_imagen) && file_exists($configsTipoCont->pathImagenesModulo . $contenido->url_primera_imagen)){
+			// 	$contenido->imagen_sm = $configsTipoCont->urlImagenesModulo . $contenido->url_primera_imagen;
+			// 	continue;
+			// }
 			else{
 				$contenido->path = $configsTipoCont->pathImagenesModulo . $contenido->url_primera_imagen;
 				$contenido->url =$configsTipoCont->urlImagenesModulo . $contenido->url_primera_imagen;
 				$contenido->imagen_sm = $xfrContenidos->urlImagenes . 'default_img.png';
 			}
-			// unset($contenido->contenido);
+			unset($contenido->contenido);
 		}
 
 		$recordsTotal = collect($DB->select("SELECT count(*) as total  FROM xfr_contenidos  WHERE TRUE {$condicion}  "))->first()->total;
 		$recordsFiltered =  collect($DB->select("SELECT count(*) as total  FROM xfr_contenidos  WHERE TRUE {$condicion}  {$condicionSearch} "))->first()->total;
 
+		
 		return (object)[
 			'data'                 => $lista_contenidos->toArray(),
-			'data_tipo_contenido'  => $configsTipoCont,
+			'dataTipoContenido'  	 => $configsTipoCont,
 			'draw'                 => $obj->draw,
 			'recordsTotal'         => $recordsTotal,
 			'recordsFiltered'      => $recordsFiltered,
-			'query' 					     => $query,
-
+			'time'					       => microtime(true) - $tiempoInicio,
+			// 'query' 					     => $query,
 		];
-
 	}
 
 	/**
@@ -137,13 +127,13 @@ class ContenidosController extends MasterController {
 	 * {id_contenido: id_contenido}
 	 */
 	public function getContent(WP_REST_Request $req) {
+		$tiempoInicio = microtime(true);
 		/* Quitar si no es WP */
 		$req = (object)$req->get_params();
-		
-
 		$DB = $this;
 		// replace(introtext, 'img src="images/', 'img src="../images/')
-		$contenido = collect($DB->select("SELECT c.id as id_contenido, c.tipo_contenido, 
+		$contenido = collect($DB->select(
+									"SELECT c.id as id_contenido, c.tipo_contenido, 
 										c.fecha_publicacion, c.titulo, c.resumen
 										, c.contenido
 										, c.imagen
@@ -157,6 +147,7 @@ class ContenidosController extends MasterController {
 		$this->incrementaNumeroVistas($contenido->id_contenido);
 		$contenido->numero_vistas ++;
 
+		/* Se determina el SITIO */
 		$site = $this->valorParametro((object)['dominio' => 'site', 'nombre' => 'site']);
 		$carpetaSeccion = '';
 		if ($site == 'magistratura') /* Si es de Magistratura solo se tiene la carpeta noticias */
@@ -167,7 +158,7 @@ class ContenidosController extends MasterController {
 		}
 		
 		/* Se obtiene las configuraciones de rutas del parametro del tipo contenido */
-		$configsTipoCont = $this->objTipoContenido($contenido->tipo_contenido);
+		$configsTipoCont = $this->funcionesContenidos->objTipoContenido($contenido->tipo_contenido);
 
 		/** Acondicionamos algunos campos */
 		if (!empty($contenido->imagen) && file_exists($configsTipoCont->pathImagenesModulo . $contenido->imagen))
@@ -183,12 +174,18 @@ class ContenidosController extends MasterController {
 		$contenido->contenido = str_replace('<img src="', '<img src="' . $configsTipoCont->urlImagenesModulo, $contenido->contenido);	
 
 		$contenido->campos_extra = json_decode($contenido->campos_extra); 
+		$contenido->archivos = json_decode($contenido->archivos);
+		if (!empty($contenido->archivos))
+			foreach ($contenido->archivos as $archivo) {
+				$archivo->archivoUrl = $configsTipoCont->urlArchivosModulo . $archivo->archivo;
+			}
 		// $contenido->sistema = $site;
 
 		return (object)[
 			'data'    => $contenido,
 			'config'	=> $configsTipoCont->config,
-			'status' => 'ok'
+			'status' 	=> 'ok',
+			'time'		=> microtime(true) - $tiempoInicio,
 		];
 	}
 
@@ -247,37 +244,6 @@ class ContenidosController extends MasterController {
 
 
 				global $xfrContenidos;
-				/* Se obtiene las configuraciones de rutas del parametro del tipo contenido */
-				// $configsTipoCont = $this->objTipoContenido($biblioteca);
-
-				// foreach ($lista_contenidos as $contenido) {
-				// 	// if(!$contenido->resumen || trim($contenido->resumen) == ''){
-				// 	// 	$contenidoSinTags = preg_replace('/<w[^>]*>[^>]*<\/w[^>]*>|<xml>[^>]*<\/xml>|<style>[^>]*<\/style>|<[^>]*>/', '', $contenido->contenido);
-				// 	// 	// $contenidoSinTags = preg_replace('/\s|\n|\r|\t/', '', $contenidoSinTags);
-				// 	// 	$contenido->resumen = substr(trim($contenidoSinTags), 0, 150);
-				// 	// }
-				// 	$contenido->resumen = substr(trim($contenido->resumen), 0, 150);
-		
-				// 	/* si imagen_sm */
-				// 	if(!empty($contenido->imagen_sm) && file_exists($configsTipoCont->pathImagenesModulo . $contenido->imagen_sm)){
-				// 		$contenido->imagen_sm = $configsTipoCont->urlImagenesModulo . $contenido->imagen_sm;
-				// 		continue;
-				// 	}
-				// 	/* si imagen */
-				// 	else if(!empty($contenido->imagen) && file_exists($configsTipoCont->pathImagenesModulo . $contenido->imagen)){
-				// 		$contenido->imagen_sm = $configsTipoCont->urlImagenesModulo . $contenido->imagen;
-				// 		continue;
-				// 	}
-				// 	else{
-				// 		$contenido->imagen_sm = $xfrContenidos->urlImagenes . 'default_img.png';
-				// 	}
-				// 	// unset($contenido->contenido);
-				// }
-
-
-				/** se obtiene un array con los elementos campo, que son los campos que seran parte de los niveles,  */
-				// $nivelesGroupBy = collect($tipoContenidoConfig->niveles)->pluck('campo')->values()->all();
-				// $lista_contenidos = $lista_contenidos->groupBy($nivelesGroupBy);		
 
 				$recordsTotal = collect($DB->select("SELECT count(*) as total  FROM sentencias  WHERE estado like 'premiada'  "))->first()->total;
 
@@ -307,155 +273,148 @@ class ContenidosController extends MasterController {
 		$this->statement("UPDATE xfr_contenidos set numero_vistas = numero_vistas + 1 WHERE id = {$id_contenido}");
 	}
 
-
 	/**
-	 * POST PAra insertar o actualizar a un contenido
+	 * POST 
+	 * Guarda el fomulario de contenidos, con sus componentes extras,  tambien realiza el upload de imagenes  archivos
+	 * la informacion del contenido esta en data_contenido_JSON
 	 */
-	public function saveContenido(WP_REST_Request $req) {
-		$req = (object)$req->get_params();
-
-		$obj                       = (object)[];
-		$obj->id                   = $req->id_contenido ?? null;
-		$obj->tipo_contenido       = $req->tipo_contenido;
-		$obj->fecha_publicacion    = $req->fecha_publicacion;
-		$obj->titulo               = $req->titulo;
-		$obj->resumen              = $req->resumen??'';
-		$obj->contenido            = $req->contenido;
-		$req->imagen ? $obj->imagen = $req->imagen : false;
-		$obj->estado_contenido     = $req->estado_contenido;
-		$obj->texto                = $req->texto ??'';
-		$obj->texto_corto          = $req->texto_corto ?? '';
-		$obj->texto_token          = $req->texto_token ?? '';
-		$obj->orden                = $req->orden ?? 1;
-		$obj->campos_extra         = $req->campos_extra ? json_encode($req->campos_extra) : '';
-		$obj->imagenes             = $req->imagenes ?? '';
-		$obj->archivos             = (isset($req->archivos) && count($req->archivos)>0 )? implode(',', $req->archivos) : '';
-		
-		$user_id = get_current_user_id();
-		// //TODO: no esta guardando el valor de user_id  solo coloca cero- no jala de WP
-		// /** solo para insert */
-		!($req->id_contenido) ? $obj->numero_vistas  = 1            : false;
-		!($req->id_contenido) ? $obj->created_at  = $this->now()    : false;
-		!($req->id_contenido) ? $obj->created_by  = $user_id        : false;
-		/** Solo para caso update */
-		($req->id_contenido) ? $obj->updated_at = $this->now() : false;
-		($req->id_contenido) ? $obj->updated_by = $user_id          : false;
-
-		$obj->id_contenido = $this->guardarObjetoTabla($obj, 'xfr_contenidos');
-
-		return [
-			'data'   => $obj,
-			'msg'    => "Se guardó correctamente el registro.",
-			"status" => "ok"
-		];
-	}
-
-	/**
-	 * POST
-	 * recibe los archivos y los copia a sus carpetas respectivas
-	 * se reciben a travez de metodos $_FILES y $_POST ya que vieneen uobjeto formData
-	 */
-	public function fileUpload() {
+	public function saveContenidoUpload() {
+		$tiempoInicio = microtime(true);
 		// return;
-		$obj  = (object)$_POST;
+		$jsonData  = stripslashes($_POST['data_contenido_JSON']); /*Eliminar los escaper por demas '\\\' */
+		
+		$data = json_decode($jsonData);
+		/* Se obtiene el contenido antes de ser modificado */
+		$DB = $this;
+		$contenidoOld = collect($DB->select("SELECT * from xfr_contenidos where id = {$data->id_contenido}"))->first();
+
+		$contenido                       = (object)[];
+		$contenido->id                   = $data->id_contenido ?? null;
+		$contenido->tipo_contenido       = $data->tipo_contenido;
+		$contenido->fecha_publicacion    = empty($data->fecha_publicacion) ? null : $data->fecha_publicacion;
+		$contenido->titulo               = $data->titulo;
+		$contenido->resumen              = $data->resumen ?? '';
+		$contenido->contenido            = $data->contenido;
+		$contenido->estado_contenido     = $data->estado_contenido;
+		$contenido->texto                = $data->texto ?? '';
+		$contenido->texto_token          = $data->texto_token ?? '';
+		$contenido->orden                = $data->orden ?? 1;
+		$contenido->campos_extra         = $data->campos_extra ? json_encode($data->campos_extra, JSON_UNESCAPED_UNICODE) : '';
+		// $contenido->imagenes             = $data->imagenes ?? '';
+		$contenido->texto 							 = $this->funcionesContenidos->quitarHtmlTags($contenido->contenido);
+		$contenido->texto_token					 = Normaliza::lematizaConStemSW($contenido->texto);
+
+		/* Si no llega imagen o vacio , entonces no se cambio la imagen*/
+		empty($data->imagen) ? false : $contenido->imagen = $this->funcionesContenidos->codigoUnico() . '.' . pathinfo($data->imagen, PATHINFO_EXTENSION);;
+
+		$user_id = get_current_user_id();
+		// /** solo para insert */
+		!($data->id_contenido) ? $contenido->numero_vistas  = 1            : false;
+		!($data->id_contenido) ? $contenido->created_at  = $this->now()    : false;
+		!($data->id_contenido) ? $contenido->created_by  = $user_id        : false;
+		/** Solo para caso update */
+		($data->id_contenido) ? $contenido->updated_at = $this->now() 		 : false;
+		($data->id_contenido) ? $contenido->updated_by = $user_id          : false;
+
+		/* GESTION ARCHIVOS  controla los nuevos y los que se deben borrar y actualizar el campo de la tabla */
+		$controlArchivos = (object)[];
+		$controlArchivos->nuevos 	 = [];
+		$controlArchivos->delete	 = [];
+		$controlArchivos->archivos = [];
+		foreach (collect($data->archivos) as $archivo) {
+			/* el objeto archivo: {nombre: , archivo:, accion_archivo: }*/
+			if ($archivo->accion_archivo == 'new') {
+				$objArch 					= (object)[];
+				$objArch->nombre  = str_replace(' ', '_', $archivo->nombre);
+				$nuevoNombre      = /* $objArch->nombre . '__' .*/ $this->funcionesContenidos->codigoUnico() . '.' . pathinfo($archivo->nombre, PATHINFO_EXTENSION);
+				$objArch->archivo = $nuevoNombre;
+
+				$controlArchivos->nuevos[] 	 = $objArch; 
+				$controlArchivos->archivos[] = $objArch;
+			}
+
+			if ($archivo->accion_archivo == 'keep') {
+				$objArch 					= (object)[];
+				$objArch->nombre  = $archivo->nombre;
+				$objArch->archivo = $archivo->archivo;
+
+				$controlArchivos->archivos[] = $objArch; 
+			}
+
+			if($archivo->accion_archivo == 'delete'){
+				$controlArchivos->delete[] = $archivo; 
+			}
+		}
+		$contenido->archivos = count($controlArchivos->archivos) > 0 ? json_encode($controlArchivos->archivos, JSON_UNESCAPED_UNICODE) : '';
+		
+
+		/* GUARDA CONTENIDO */
+		$contenido->id_contenido = $this->guardarObjetoTabla($contenido, 'xfr_contenidos');
+	
 		/* Se obtiene las configuraciones de rutas del parametro del tipo contenido */
-		$obj->paramTipoCont = $this->objTipoContenido($obj->tipo_contenido);
-		$obj->site = $this->valorParametro((object)['dominio' => 'site', 'nombre' => 'site']);
-		$respuesta = [];
+		$paramTipoCont = $this->funcionesContenidos->objTipoContenido($data->tipo_contenido);
+		$directorioDestino = (object)['imagen' => $paramTipoCont->pathImagenesModulo, 'archivo' => $paramTipoCont->pathArchivosModulo];
+
+		$site = $this->valorParametro((object)['dominio' => 'site', 'nombre' => 'site']);
+
+		
+		$mensajesMoveFile = [];
+		/*  Este bloque solo correra si se ha cambiado de imagen desde el front, entonces se debe eliminar la imagen anterior */
 		if (!empty($_FILES['imagen'])) {
 			$imagenFile               = $_FILES['imagen'];
-			$obj->nombre              = $imagenFile['name'];
-			$obj->archivoTemporal     = $imagenFile['tmp_name'];
-			// $obj->size             = $imagenFile['size'];
-			$obj->tipo                = 'imagen';
-			$respuesta[] = $this->moveFile($obj);
+			$imagenNuevaDestino = $directorioDestino->imagen . $contenido->imagen;
+			$mensajesMoveFile[] = $this->funcionesContenidos->moveFile($imagenFile['tmp_name'], $imagenNuevaDestino );
+
+			/* reduce la dimension de la imagen a small */
+			$nombreImagenSmall =  pathinfo($contenido->imagen, PATHINFO_FILENAME) . '_s.' . pathinfo($contenido->imagen, PATHINFO_EXTENSION);
+			$this->funcionesContenidos->reducirImagen($imagenNuevaDestino, 300, false, $directorioDestino->imagen . $nombreImagenSmall);
+			/* BORRAR IMAGEN ANTIGUA,*/
+			if(isset($contenidoOld) && !empty($contenidoOld->imagen)){
+				$imagenOld = $contenidoOld->imagen;
+				$imagenOld_s =  pathinfo($imagenOld, PATHINFO_FILENAME) . '_s.' . pathinfo($imagenOld, PATHINFO_EXTENSION);
+				$this->funcionesContenidos->deleteFile($directorioDestino->imagen . $imagenOld);
+				$this->funcionesContenidos->deleteFile($directorioDestino->imagen . $imagenOld_s);
+			}
 
 		}
-		if (!empty($_FILES['imagen_s'])) {
-			$imagenFile               = $_FILES['imagen_s'];
-			$extension = pathinfo($imagenFile['name'], PATHINFO_EXTENSION); // Obtener la extensión del archivo
-			$nuevoNombre = pathinfo($imagenFile['name'], PATHINFO_FILENAME) . '_s.' . $extension; // Agregar el sufijo al nombre del archivo
-			$obj->nombre              = $nuevoNombre;
-			$obj->archivoTemporal     = $imagenFile['tmp_name'];
-			// $obj->size             = $imagenFile['size'];
-			$obj->tipo                = 'imagen';
-			$respuesta[] = $this->moveFile($obj);
-		}
-		if (!empty($_FILES['archivos'])) {
-			$file                     = $_FILES['archivos'];
+
+		if (!empty($_FILES['archivos']) && count($controlArchivos->nuevos) > 0 ) {
+			$file  = $_FILES['archivos'];
 			for ($i = 0; $i < count($file['name']); $i++) {
-				$obj->nombre              = $file['name'][$i];
-				$obj->archivoTemporal     = $file['tmp_name'][$i];
-				// $obj->size             = $imagenFile['size'];
-				$obj->tipo                = 'archivo';
-				$respuesta[] = $this->moveFile($obj);
-			}
+				$nombreFile = str_replace(' ', '_',  $file['name'][$i]);
+				$archivoNew = collect($controlArchivos->nuevos)->first(function ($item) use ($nombreFile) {
+													return $item->nombre == $nombreFile;
+											});
+				$mensajesMoveFile[] = $this->funcionesContenidos->moveFile($file['tmp_name'][$i], $directorioDestino->archivo . $archivoNew->archivo);
+			}			
+		}
+		/* Elimina fisicamente los archivos deseleccionados */
+		if(count($controlArchivos->delete) > 0 ){
+				foreach ($controlArchivos->delete as $item) {
+					$ArchivoDestino = $directorioDestino->archivo . $item->archivo;
+					// $item->directorioDestino = $directorioDestino->archivo;
+					$this->funcionesContenidos->deleteFile($ArchivoDestino);
+				}
 		}
 
 		$errores = 0;
 		$msgErrors = '';
-		foreach ($respuesta as $item) {
-			if($item->status == 'error'){
+		foreach ($mensajesMoveFile as $mensajeMove) {
+			if($mensajeMove->status == 'error'){
 				$errores ++;
-				$msgErrors .= $item->msg;
+				$msgErrors .= $mensajeMove->msg . ' ';
 			}
 		}
 
 		return [
 			'status' => $errores > 0 ? 'error' : 'ok',
-			'msg'		 => $errores > 0 ? $msgErrors : 'Se subieron todos los archivos'
+			'msg'		 => $errores > 0 ? $msgErrors : 'Se subieron todos los archivos',
+			'time'	 => microtime(true) - $tiempoInicio,
 		];
 	}
 
-	private function moveFile($obj) {
-		// Verificar si se ha subido correctamente el archivo
-		$respuesta = (object)[];
-		if (is_uploaded_file($obj->archivoTemporal)) {
-			$directorioDestino = ($obj->tipo == 'imagen') ?
-				$obj->paramTipoCont->pathImagenesModulo : $obj->paramTipoCont->pathArchivosModulo; 
+	
 
-			// Mover el archivo del directorio temporal al directorio de destino
-			if (move_uploaded_file($obj->archivoTemporal, $directorioDestino . $obj->nombre)) {
-				$respuesta->status = "ok";
-				$respuesta->msg = "{$obj->tipo} {$obj->nombre}, almacenado correctamente.";
-			} 
-			else {
-				$respuesta->status = "error";
-				$respuesta->msg =  "{$obj->tipo} {$obj->nombre}, Error al almacenar el archivo.";
-			}
-		} 
-		else {
-			$respuesta->status = "error";
-			$respuesta->msg = "{$obj->tipo} {$obj->nombre}, Error al subir el archivo.";
-		}
-		return $respuesta;
-	}
-
-	/**
-	 * De CLASE
-	 * obtiene  objeto parametros de un tipo Contenido 
-	 */
-	private function objTipoContenido($tipo_contenido) {
-		$site = $this->valorParametro((object)['dominio' => 'site', 'nombre' => 'site']);
-		$paramTipoCont = $this->getParametro((object)['dominio' => 'tipo_contenido', 'nombre' => $tipo_contenido]);
-		$configTipoCont = json_decode($paramTipoCont->config);
-		
-		$carpetaTipoCont = '';
-		if ($site == 'magistratura') /* Si es de Magistratura solo se tiene la carpeta noticias */
-			$carpetaTipoCont = 'noticias/';
-		else if ($site == 'observatorio') {
-			$carpetaTipoCont = $configTipoCont->directorio ? $configTipoCont->directorio . '/' : ''; 
-		}
-		global $xfrContenidos;
-
-		return (object)[
-			'config'							     => $configTipoCont,
-			'param_tipo_contenido'		 => $paramTipoCont,
-			'pathImagenesModulo'       => $xfrContenidos->pathImagenes . $carpetaTipoCont,
-			'pathArchivosModulo'       => $xfrContenidos->pathArchivos . $carpetaTipoCont,
-			'urlImagenesModulo'        => $xfrContenidos->urlImagenes  . $carpetaTipoCont,
-			'urlArchivosModulo'  	     => $xfrContenidos->urlArchivos  . $carpetaTipoCont,
-		];
-	}
+	
 
 }
